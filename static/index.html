@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Freedom | Conversation Quality Analytics</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="layout">
+    <aside class="side">
+      <div class="brand"><div class="logo">F</div><div><b>FREEDOM</b><small>CONVERSATION QUALITY</small></div></div>
+      <div class="smallcaps">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+      <button class="nav active" data-page="dashboard">◈ &nbsp;Обзор</button>
+      <button class="nav" data-page="dialogs">◫ &nbsp;Диалоги</button>
+      <button class="nav" data-page="results">▤ &nbsp;Результаты</button>
+      <button class="nav" data-page="reviews">⚖ &nbsp;Апелляции <span id="reviewBubble" class="nav-bubble"></span></button>
+      <button class="nav" data-page="checklist">☷ &nbsp;Чек-лист</button>
+      <div class="side-bottom"><span id="llmStatus" class="tag">Проверка API…</span><p>Hackathon Prototype v1.0 · RU / KZ / EN</p><p>Грубые нарушения — отдельный флаг</p></div>
+    </aside>
+    <main class="main">
+      <header class="top"><div><div class="eyebrow">FREEDOM BROKER / CQA</div><h1 id="pageTitle">Обзор</h1><p class="subtitle" id="pageSubtitle">Аналитика качества клиентских диалогов</p></div><button id="demoBtn" class="ghost">+ Учебный пример</button></header>
+      <div id="notice" aria-live="polite"></div>
+      <section id="dashboard" class="page">
+        <div class="stats" id="dashStats"></div>
+        <div class="dashboard-grid">
+          <div class="panel"><div class="section-title"><h2>Средний балл по языкам</h2><span class="fine">Финальные оценки после апелляций</span></div><div id="languageBreakdown" class="breakdown"></div></div>
+          <div class="panel"><div class="section-title"><h2>Качество по критериям</h2><span class="fine">Доля выполнения применимых критериев</span></div><div id="criteriaBreakdown" class="breakdown"></div></div>
+        </div>
+        <div class="panel"><div class="section-title"><h2>Быстрые действия</h2><span class="fine">Демонстрация полного процесса</span></div>
+          <div class="action-row"><button class="primary" data-goto="dialogs">Импортировать и оценить диалоги</button><button class="ghost" data-goto="results">Показать оценки</button><button class="ghost" data-goto="reviews">Рассмотреть апелляции</button><button class="ghost" data-goto="checklist">Изменить чек-лист</button></div>
+        </div>
+      </section>
+      <section id="dialogs" class="page hidden">
+        <div class="stats" id="stats"></div>
+        <div class="panel import-panel"><div><h2>Импортировать диалоги</h2><p class="muted">Вставьте полный GET URL из PDF организаторов или загрузите JSON формата <code>data.records</code>. URL со служебной подписью не сохраняется в проекте.</p></div>
+          <div class="import-actions"><input type="url" id="apiUrl" placeholder="https://...environment.api.powerplatform.com/...&group_id=DEV" autocomplete="off" /><button class="primary" id="importUrl">Импорт GET</button><label class="file-button">Загрузить JSON<input type="file" id="jsonFile" accept=".json,application/json" hidden /></label></div>
+          <p class="fine">Подпись из ссылки организаторов не встраивается в код; импорт идёт через backend. Данные хранятся локально.</p>
+        </div>
+        <div class="panel" id="batchPanel"><div class="section-title"><div><h2>Пакетная AI-оценка</h2><p class="fine">Обработка на сервере, прогресс сохраняется в SQLite. При смене версии старые результаты не затираются.</p></div><div class="action-row"><button class="primary" id="batchBtn">Оценить новые</button><button class="ghost small hidden" id="cancelBatch">Отменить</button></div></div><div id="jobProgress" class="job-progress">Пакетная обработка ещё не запускалась.</div></div>
+        <div class="panel"><div class="section-title"><h2>Транскрипты</h2><div class="filters"><select id="datasetFilter"><option value="">Все наборы</option></select><select id="channelFilter"><option value="">Все каналы</option><option value="agent chat">Чаты</option><option value="voice call">Звонки</option></select><input id="search" type="search" placeholder="Поиск по ID"/><select id="languageFilter"><option value="">Все языки</option><option>RU</option><option>KZ</option><option>EN</option></select></div></div><div id="dialogList" class="list"></div></div>
+      </section>
+      <section id="results" class="page hidden">
+        <div class="columns"><div class="panel"><div class="section-title"><h2>Оценки</h2><a href="/api/export/results.csv" class="export-link">↓ Экспорт CSV</a></div><div id="evaluationList" class="list"></div></div><div class="panel detail" id="evaluationDetail"><div class="empty">Выберите оценку, чтобы увидеть детали и апелляции</div></div></div>
+      </section>
+      <section id="reviews" class="page hidden">
+        <div class="panel"><div class="section-title"><div><h2>Очередь апелляций</h2><p class="muted">Проверяющий видит возражение и открывает конкретную оценку для принятия решения.</p></div></div><div id="reviewQueue" class="list"></div></div>
+      </section>
+      <section id="checklist" class="page hidden"><div class="panel"><div class="section-title"><div><h2>Конструктор чек-листа</h2><p class="muted">Сохраняет новую версию: прошлые результаты остаются привязаны к исходным правилам.</p></div><div class="filters"><select id="checklistVersion"></select><button class="ghost" id="addCriterion">+ Критерий</button></div></div><label class="field-label">Название конфигурации<input id="checklistName" /></label><div id="criteriaEditor"></div><div class="editor-bottom"><span id="weightsInfo"></span><button class="primary" id="saveChecklist">Сохранить как новую версию</button></div></div></section>
+    </main>
+  </div>
+<script src="/static/app.js"></script>
+</body>
+</html>

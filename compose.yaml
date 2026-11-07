@@ -1,0 +1,15 @@
+services:
+  cqa:
+    build: .
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      CQA_DB_PATH: /data/cqa.sqlite3
+    volumes:
+      - cqa-data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+    restart: unless-stopped
+volumes:
+  cqa-data:

@@ -1,0 +1,59 @@
+{
+  "error": "",
+  "isSuccess": true,
+  "data": {
+    "dataset_group_id": "SYNTHETIC-DEMO",
+    "total_records": 4,
+    "records": [
+      {
+        "conversation_id": "synthetic-ru-001",
+        "channel": "agent chat",
+        "language": "RU",
+        "transcript": [
+          {"timestamp": "00:01", "speaker": "client", "text": "Здравствуйте, подскажите, где посмотреть комиссии по тарифу?"},
+          {"timestamp": "00:12", "speaker": "operator", "text": "Здравствуйте! Меня зовут Анна. Информацию о комиссиях можно найти в разделе «Тарифы» в приложении."},
+          {"timestamp": "00:20", "speaker": "client", "text": "Спасибо!"},
+          {"timestamp": "00:29", "speaker": "operator", "text": "Пожалуйста! Могу ли ещё чем-нибудь помочь? Хорошего дня!"}
+        ],
+        "audio_url": null
+      },
+      {
+        "conversation_id": "synthetic-kz-001",
+        "channel": "agent chat",
+        "language": "KZ",
+        "transcript": [
+          {"timestamp": "00:00", "speaker": "client", "text": "Сәлеметсіз бе! Брокерлік шот туралы ақпаратты қайдан аламын?"},
+          {"timestamp": "00:10", "speaker": "operator", "text": "Сәлеметсіз бе! Менің атым Дана. Ақпаратты мобильді қосымшаның анықтама бөлімінен көре аласыз."},
+          {"timestamp": "00:21", "speaker": "client", "text": "Рақмет!"},
+          {"timestamp": "00:27", "speaker": "operator", "text": "Сау болыңыз! Сұрақтарыңыз болса, хабарласыңыз."}
+        ],
+        "audio_url": null
+      },
+      {
+        "conversation_id": "synthetic-en-001",
+        "channel": "agent chat",
+        "language": "EN",
+        "transcript": [
+          {"timestamp": "00:01", "speaker": "client", "text": "Hello! Where can I find general information about account fees?"},
+          {"timestamp": "00:13", "speaker": "operator", "text": "Hello! My name is Alex. You can find the current fee schedule in the Tariffs section of the official app."},
+          {"timestamp": "00:19", "speaker": "client", "text": "Thanks."},
+          {"timestamp": "00:23", "speaker": "operator", "text": "You're welcome. Let me know if you need anything else. Goodbye!"}
+        ],
+        "audio_url": null
+      },
+      {
+        "conversation_id": "synthetic-voice-001",
+        "channel": "voice call",
+        "language": "RU",
+        "transcript": [
+          {"timestamp": "2026-11-07T11:00:00+05:00", "speaker": "system", "text": "Начало звонка"},
+          {"timestamp": "2026-11-07T11:00:02+05:00", "speaker": "client", "text": "Здравствуйте, у меня вопрос по тарифам."},
+          {"timestamp": "2026-11-07T11:00:04+05:00", "speaker": "operator", "text": "Здравствуйте, меня зовут Айжан. Какие именно тарифы вас интересуют?"},
+          {"timestamp": "2026-11-07T11:00:12+05:00", "speaker": "client", "text": "Комиссии на покупку акций."},
+          {"timestamp": "2026-11-07T11:00:19+05:00", "speaker": "operator", "text": "Официальную таблицу комиссий можно посмотреть в разделе тарифов на сайте."}
+        ],
+        "audio_url": null
+      }
+    ]
+  }
+}
