@@ -1,35 +1,13 @@
-# Secrets
+# Never publish API keys, old .env backups, or the local database.
 .env
 .env.*
 !.env.example
-
-# Python
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.venv/
-venv/
-env/
-
-# Node
-node_modules/
-
-# Local databases
 *.sqlite3
 *.sqlite3-*
-
-# Organizer datasets (real call transcripts and signed recording links)
-data/*
-!data/README.md
-
-# Archives
-*.zip
-
-# Editor / tooling
-.vscode/
-.idea/
-
-# OS
-.DS_Store
-Thumbs.db
-desktop.ini
+*.sqlite3.*
+*.db
+*.db-*
+__pycache__/
+.pytest_cache/
+.venv/
+# results/dev/results.json and results/prod/results.json MUST be committed.

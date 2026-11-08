@@ -15,14 +15,16 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from checklist import DEFAULT_CHECKLIST
 from scoring import rubric_score
-from llm import LLMError, evaluate_with_llm
+from llm import LLMError, evaluate_with_llm, independently_audit_evaluation
+from quality import evidence_warnings, score_signature
+from submission import SubmissionError, checklist_shape, convert_saved_evaluation, error_result, validate_document
 
 try:
     from dotenv import load_dotenv
@@ -33,7 +35,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 DB = Path(os.environ.get('CQA_DB_PATH',str(ROOT/'cqa.sqlite3')))
 if not DB.is_absolute(): DB = ROOT / DB
-app = FastAPI(title='Freedom Broker CQA — Conversation Quality Analytics',version='1.0.0')
+app = FastAPI(title='Freedom Broker CQA — Conversation Quality Analytics',version='1.2.0')
 app.mount('/static', StaticFiles(directory=ROOT/'static'), name='static')
 
 
@@ -69,7 +71,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS conversations (
             id TEXT PRIMARY KEY, channel TEXT NOT NULL, language TEXT NOT NULL,
             transcript_json TEXT NOT NULL, audio_url TEXT, created_at TEXT NOT NULL,
-            dataset_group_id TEXT NOT NULL DEFAULT 'manual');
+            dataset_group_id TEXT NOT NULL DEFAULT 'manual',
+            archived_at TEXT);
         CREATE TABLE IF NOT EXISTS checklists (
             id TEXT PRIMARY KEY, version INTEGER UNIQUE NOT NULL,
             data_json TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -77,6 +80,7 @@ def init_db():
             id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL,
             checklist_id TEXT NOT NULL, mode TEXT NOT NULL,
             original_json TEXT NOT NULL, created_at TEXT NOT NULL,
+            audit_json TEXT, audit_at TEXT,
             FOREIGN KEY(conversation_id) REFERENCES conversations(id),
             FOREIGN KEY(checklist_id) REFERENCES checklists(id));
         CREATE TABLE IF NOT EXISTS appeals (
@@ -96,6 +100,9 @@ def init_db():
         # Migration for any previously opened MVP database.
         for table, col, ddl in [
             ('conversations','dataset_group_id',"TEXT NOT NULL DEFAULT 'manual'"),
+            ('conversations','archived_at','TEXT'),
+            ('evaluations','audit_json','TEXT'),
+            ('evaluations','audit_at','TEXT'),
             ('appeals','evidence_json','TEXT')]:
             if col not in {r[1] for r in db.execute(f'PRAGMA table_info({table})')}:
                 db.execute(f'ALTER TABLE {table} ADD COLUMN {col} {ddl}')
@@ -123,7 +130,7 @@ def get_conversation(db, cid):
     if not r: raise HTTPException(404,'Conversation not found')
     return {'conversation_id':r['id'],'channel':r['channel'],'language':r['language'],
             'transcript':json.loads(r['transcript_json']),'audio_url':r['audio_url'],
-            'dataset_group_id':r['dataset_group_id']}
+            'dataset_group_id':r['dataset_group_id'], 'archived_at':r['archived_at']}
 
 
 def validate_checklist(c: dict):
@@ -193,10 +200,18 @@ class ManualPayload(BaseModel):
     checklist_id: str|None = None
     answers: list[dict]
 
+class SubmissionPayload(BaseModel):
+    kind: str  # dev or prod
+    dataset_group_id: str
+    team_name: str = Field(min_length=1, max_length=150)
+    checklist_id: str|None = None
+
+
 class BatchPayload(BaseModel):
     checklist_id: str|None = None
     force: bool = False
     limit: int = Field(default=300, ge=1, le=3000)
+    dataset_group_id: str|None = None
 
 
 @app.get('/')
@@ -208,18 +223,21 @@ def home():
 def state():
     with db_conn() as db:
         dialogs=[dict(r) for r in db.execute('''
-            SELECT c.id AS conversation_id,c.channel,c.language,c.created_at,c.dataset_group_id,
+            SELECT c.id AS conversation_id,c.channel,c.language,c.created_at,c.dataset_group_id,c.archived_at,
               (SELECT count(*) FROM evaluations e WHERE e.conversation_id=c.id) AS evaluations
             FROM conversations c ORDER BY c.id LIMIT 300''')]
         evals=[dict(r) for r in db.execute('''
             SELECT e.id,e.conversation_id,e.mode,e.created_at,cl.version AS checklist_version,
+              c.dataset_group_id,c.archived_at,
               (SELECT count(*) FROM appeals a WHERE a.evaluation_id=e.id AND a.status='pending') AS pending_appeals
             FROM evaluations e JOIN checklists cl ON e.checklist_id=cl.id
+            JOIN conversations c ON c.id=e.conversation_id
             ORDER BY e.created_at DESC LIMIT 500''')]
         checks=[{'id':r['id'],'version':r['version'],'created_at':r['created_at'],'name':json.loads(r['data_json'])['name']}
                 for r in db.execute('SELECT * FROM checklists ORDER BY version DESC')]
         jobs=[dict(r) for r in db.execute("SELECT id,status,checklist_id,total,completed,succeeded,failed,created_at,updated_at FROM batch_jobs ORDER BY created_at DESC LIMIT 10")]
         return {'conversations':dialogs,'evaluations':evals,'checklists':checks,'jobs':jobs,
+                'archived_count':sum(bool(d['archived_at']) for d in dialogs),
                 'current_checklist':get_checklist(db),
                 'llm_configured':bool(os.getenv('CQA_LLM_API_KEY') and os.getenv('CQA_LLM_MODEL')),
                 'model':os.getenv('CQA_LLM_MODEL','') if os.getenv('CQA_LLM_API_KEY') else None}
@@ -322,11 +340,61 @@ def conversation(cid: str):
         return get_conversation(db,cid)
 
 
+
+def _active_batch_for_conversation(db, cid):
+    for job in db.execute("SELECT ids_json FROM batch_jobs WHERE status IN ('pending','running','cancelling')"):
+        if cid in json.loads(job['ids_json']):
+            return True
+    return False
+
+@app.post('/api/conversations/{cid}/archive')
+def archive_conversation(cid: str):
+    with db_conn() as db:
+        get_conversation(db,cid)
+        if _active_batch_for_conversation(db,cid):
+            raise HTTPException(409,'Conversation is in an active batch job')
+        db.execute('UPDATE conversations SET archived_at=COALESCE(archived_at,?) WHERE id=?',(now(),cid))
+    return {'conversation_id':cid,'archived':True}
+
+@app.post('/api/conversations/{cid}/restore')
+def restore_conversation(cid: str):
+    with db_conn() as db:
+        get_conversation(db,cid)
+        db.execute('UPDATE conversations SET archived_at=NULL WHERE id=?',(cid,))
+    return {'conversation_id':cid,'archived':False}
+
+@app.get('/api/conversations/{cid}/backup.json')
+def backup_conversation(cid: str):
+    """Safely export transcript, all grades, and appeals before destructive deletion."""
+    with db_conn() as db:
+        convo=get_conversation(db,cid)
+        evaluations=[get_evaluation_detail(db,r['id']) for r in db.execute('SELECT id FROM evaluations WHERE conversation_id=? ORDER BY created_at',(cid,))]
+    return {'conversation':convo,'evaluations':evaluations,'exported_at':now()}
+
+@app.delete('/api/conversations/{cid}')
+def delete_conversation(cid: str, confirm_id: str = Query(...), cascade: bool = False):
+    if confirm_id != cid:
+        raise HTTPException(422,'Type the exact conversation ID to confirm permanent deletion')
+    with db_conn() as db:
+        get_conversation(db,cid)
+        if _active_batch_for_conversation(db,cid):
+            raise HTTPException(409,'Conversation is in an active batch job')
+        ids=[r['id'] for r in db.execute('SELECT id FROM evaluations WHERE conversation_id=?',(cid,))]
+        if ids and not cascade:
+            raise HTTPException(409,'Conversation has grades/appeals. Back up and confirm cascade=true to delete all related data.')
+        for eid in ids:
+            db.execute('DELETE FROM appeals WHERE evaluation_id=?',(eid,))
+        db.execute('DELETE FROM evaluations WHERE conversation_id=?',(cid,))
+        db.execute('DELETE FROM conversations WHERE id=?',(cid,))
+    return {'deleted':cid,'evaluations_deleted':len(ids)}
+
+
 @app.post('/api/evaluations')
 def evaluate(p: EvaluatePayload):
     with db_conn() as db:
         c=get_conversation(db,p.conversation_id)
         rubric=get_checklist(db,p.checklist_id)
+        if c['archived_at']: raise HTTPException(409,'Archived conversation must be restored before evaluation')
     try:
         score=evaluate_with_llm(c,rubric)
     except LLMError as e:
@@ -353,15 +421,36 @@ def get_evaluation_detail(db, eid):
             if appeal.get('evidence_json'):
                 entries[key]['evidence_indices']=json.loads(appeal['evidence_json'])
     final=rubric_score(checklist,list(entries.values()))
+    final['quality_warnings']=evidence_warnings(conversation,checklist,final)
+    saved_audit=json.loads(ev['audit_json']) if ev['audit_json'] else None
+    audit_stale=bool(saved_audit and saved_audit.get('score_signature')!=score_signature(final))
     return {'id':ev['id'],'mode':ev['mode'],'created_at':ev['created_at'],
             'conversation':conversation,'checklist':checklist,'original':original,
-            'final':final,'appeals':appeals}
+            'final':final,'appeals':appeals,'audit':saved_audit,
+            'audit_at':ev['audit_at'],'audit_stale':audit_stale}
 
 
 @app.get('/api/evaluations/{eid}')
 def evaluation(eid: str):
     with db_conn() as db:
         return get_evaluation_detail(db,eid)
+
+
+
+@app.post('/api/evaluations/{eid}/audit')
+def audit_evaluation(eid: str):
+    """Explicit opt-in paid/free-tier LLM second pass; never mutates rubric grades."""
+    with db_conn() as db:
+        detail=get_evaluation_detail(db,eid)
+    try:
+        audit=independently_audit_evaluation(detail['conversation'],detail['checklist'],detail['final'])
+    except (LLMError,ValueError,TypeError,KeyError) as exc:
+        raise HTTPException(503,'Повторная AI-проверка не выполнена: '+str(exc)[:300]) from exc
+    audit['score_signature']=score_signature(detail['final'])
+    with db_conn() as db:
+        db.execute('UPDATE evaluations SET audit_json=?,audit_at=? WHERE id=?',
+                   (json.dumps(audit,ensure_ascii=False),now(),eid))
+    return {'audit':audit,'changed_scores':False}
 
 
 @app.post('/api/appeals')
@@ -437,7 +526,7 @@ def seed_demo():
         checklist=get_checklist(db,'checklist-v1')
         score=rubric_score(checklist,answers)
         eid=str(uuid.uuid4())
-        db.execute('INSERT INTO evaluations VALUES (?,?,?,?,?,?)',(
+        db.execute('INSERT INTO evaluations (id,conversation_id,checklist_id,mode,original_json,created_at) VALUES (?,?,?,?,?,?)',(
             eid,cid,checklist['id'],'curated-demo',json.dumps(score,ensure_ascii=False),now()))
     return {'evaluation_id':eid,'note':'Manually prepared example, NOT LLM output'}
 
@@ -475,6 +564,7 @@ def manual_evaluation(p: ManualPayload):
             raise HTTPException(422,'Every manual answer must include a reason')
     try:
         score=rubric_score(checklist,p.answers)
+        score['quality_warnings']=evidence_warnings(convo,checklist,score)
     except (ValueError,TypeError) as exc:
         raise HTTPException(422,str(exc)) from exc
     evaluation_id=store_evaluation(convo['conversation_id'],checklist['id'],'manual',score)
@@ -482,12 +572,22 @@ def manual_evaluation(p: ManualPayload):
 
 
 @app.get('/api/analytics')
-def analytics():
+def analytics(group_id: str|None = None, include_demo: bool = False):
     """Aggregate FINAL grades including reviewer decisions; never change originals."""
     with db_conn() as db:
-        rows=db.execute('SELECT id FROM evaluations ORDER BY created_at').fetchall()
-        stats={'evaluations':len(rows),'scored':0,'average_score':None,'gross_errors':0,
-               'pending_appeals':db.execute("SELECT count(*) FROM appeals WHERE status='pending'").fetchone()[0],
+        # Default statistics exclude archived conversations AND synthetic demo.
+        where='c.archived_at IS NULL'
+        args=[]
+        if group_id:
+            where+=' AND c.dataset_group_id=?'
+            args.append(group_id)
+        elif not include_demo:
+            where+=" AND c.dataset_group_id!='demo'"
+        rows=db.execute('SELECT e.id FROM evaluations e JOIN conversations c ON c.id=e.conversation_id WHERE '+where+' ORDER BY e.created_at',args).fetchall()
+        dialog_count=db.execute('SELECT COUNT(*) FROM conversations c WHERE '+where,args).fetchone()[0]
+        stats={'conversations':dialog_count,'dataset_group_id':group_id or ('all-except-demo' if not include_demo else 'all'),
+               'evaluations':len(rows),'scored':0,'average_score':None,'gross_errors':0,
+               'pending_appeals':db.execute("SELECT count(*) FROM appeals a JOIN evaluations e ON e.id=a.evaluation_id JOIN conversations c ON c.id=e.conversation_id WHERE a.status='pending' AND "+where,args).fetchone()[0],
                'by_language':{},'by_checklist':{},'by_criterion':{}}
         grades=[]
         for row in rows:
@@ -522,14 +622,116 @@ def _csv_safe(value):
     return "'"+cell if cell.lstrip(' \t\r').startswith(('=','+','-','@')) else cell
 
 
+# ---------- Organizer results.json schema 1.0 ----------
+
+def build_organizer_submission(kind: str, dataset_group_id: str, team_name: str,
+                               checklist_id: str|None = None) -> dict:
+    # Archive visibility must never silently drop source IDs.
+    if kind not in ('dev','prod'):
+        raise SubmissionError('kind должен быть dev или prod')
+    if not team_name or not team_name.strip():
+        raise SubmissionError('Укажи настоящее название команды')
+    if not dataset_group_id or dataset_group_id=='demo':
+        raise SubmissionError('Нужно выбрать набор DEV либо конкретный контрольный набор, не demo')
+    expected_count=65 if kind=='dev' else 10
+    if kind=='dev' and dataset_group_id.upper()!='DEV':
+        raise SubmissionError('Для results/dev нужно выбрать группу DEV')
+    with db_conn() as db:
+        rubric=get_checklist(db,checklist_id)
+        checklist_shape(rubric)
+        rows=list(db.execute('SELECT id,channel,transcript_json FROM conversations WHERE dataset_group_id=? ORDER BY id',(dataset_group_id,)))
+        if len(rows)!=expected_count:
+            raise SubmissionError(f'Группа {dataset_group_id}: получено {len(rows)} ID, нужно {expected_count}. Импортируй полный набор.')
+        voice_count=sum(r['channel']=='voice call' for r in rows)
+        if kind=='dev' and voice_count != 5:
+            raise SubmissionError(f'DEV: ожидается 60 чатов и 5 звонков, но найдено {expected_count-voice_count} чатов и {voice_count} звонков')
+        if kind=='prod' and voice_count:
+            raise SubmissionError('Контрольный набор должен содержать 10 чатов, не звонки')
+        expected_ids=[r['id'] for r in rows]
+        transcripts={r['id']:json.loads(r['transcript_json']) for r in rows}
+        outputs=[]; models=set(); modes=set(); warnings=[]
+        for cid in expected_ids:
+            row=db.execute('''SELECT id,mode,original_json FROM evaluations
+                WHERE conversation_id=? AND checklist_id=? ORDER BY created_at DESC,id DESC LIMIT 1''',
+                (cid,rubric['id'])).fetchone()
+            if row is None:
+                outputs.append(error_result(cid,'Нет сохранённой оценки по выбранной версии чек-листа'))
+                continue
+            try:
+                detail=get_evaluation_detail(db,row['id'])
+                result=convert_saved_evaluation(detail)
+                # Validate the candidate against the SAME checklist, including the 1-based evidence.
+                validate_document({'schema_version':'1.0','team_name':team_name.strip(),
+                    'model':{'mode':'external_api','name':'validation-only'},
+                    'results':[result]},[cid],{cid:transcripts[cid]},rubric)
+                outputs.append(result)
+                modes.add('external_api' if row['mode']=='llm' else 'local')
+                if row['mode']=='llm':
+                    metadata=json.loads(row['original_json']).get('model_info') or {}
+                    used=metadata.get('model')
+                    if not used:
+                        used='unknown-legacy-LLM'
+                        warnings.append(f'{cid}: в старой оценке не сохранено фактическое имя модели')
+                    models.add(str(used))
+                else:
+                    models.add('human reviewer')
+                    warnings.append(f'{cid}: результат создан вручную, не LLM')
+            except (SubmissionError,ValueError,TypeError,KeyError) as e:
+                outputs.append(error_result(cid,'Сохранённая оценка не соответствует схеме 1.0: '+str(e)[:320]))
+        # Do not pretend model requests were made for unscored conversations.
+        model_mode='hybrid' if len(modes)>1 else ('external_api' if 'external_api' in modes else 'local')
+        if not models:
+            models.add('none (no successful evaluations)')
+        document={'schema_version':'1.0','team_name':team_name.strip(),
+                  'model':{'mode':model_mode,'name':', '.join(sorted(models))},'results':outputs}
+        report=validate_document(document,expected_ids,transcripts,rubric)
+    destination=ROOT/'results'/kind/'results.json'
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    temporary=destination.with_name('results.json.tmp')
+    try:
+        temporary.write_text(json.dumps(document,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
+        os.replace(temporary,destination)
+    finally:
+        if temporary.exists(): temporary.unlink()
+    return {'path':f'results/{kind}/results.json','group_id':dataset_group_id,
+            'checklist_version':rubric['version'],'model':document['model'],
+            'report':report,'warnings':warnings[:20],
+            'download_url':f'/api/submissions/{kind}/download'}
+
+
+@app.post('/api/submissions/build')
+def create_submission(p: SubmissionPayload):
+    try:
+        return build_organizer_submission(p.kind,p.dataset_group_id,p.team_name,p.checklist_id)
+    except SubmissionError as exc:
+        raise HTTPException(422,str(exc)) from exc
+
+
+@app.get('/api/submissions/{kind}/download')
+def download_submission(kind: str):
+    if kind not in ('dev','prod'):
+        raise HTTPException(404,'Unknown submission kind')
+    path=ROOT/'results'/kind/'results.json'
+    if not path.is_file():
+        raise HTTPException(404,'Сначала сформируйте results.json через интерфейс')
+    return FileResponse(path,media_type='application/json',filename=f'{kind}-results.json')
+
+
 @app.get('/api/export/results.csv')
-def export_csv():
+def export_csv(group_id: str|None = None, include_demo: bool = False):
     output=io.StringIO()
     writer=csv.writer(output)
     writer.writerow(['evaluation_id','conversation_id','language','channel','group_id','checklist_version',
                      'mode','original_score','final_score','gross_error','pending_appeals','created_at'])
     with db_conn() as db:
-        for row in db.execute('SELECT id FROM evaluations ORDER BY created_at'):
+        where='c.archived_at IS NULL'
+        args=[]
+        if group_id:
+            where+=' AND c.dataset_group_id=?'
+            args.append(group_id)
+        elif not include_demo:
+            where+=" AND c.dataset_group_id!='demo'"
+        for row in db.execute('SELECT e.id FROM evaluations e JOIN conversations c ON c.id=e.conversation_id WHERE '+where+' ORDER BY e.created_at',args):
             d=get_evaluation_detail(db,row['id'])
             writer.writerow([_csv_safe(x) for x in [d['id'],d['conversation']['conversation_id'],
                 d['conversation']['language'],d['conversation']['channel'],d['conversation']['dataset_group_id'],
@@ -641,11 +843,14 @@ def create_batch(p: BatchPayload):
         if db.execute("SELECT 1 FROM batch_jobs WHERE checklist_id=? AND status IN ('pending','running','cancelling')",(rubric['id'],)).fetchone():
             raise HTTPException(409,'Another batch for this checklist is already running')
         if p.force:
-            candidates=db.execute('SELECT id FROM conversations ORDER BY id LIMIT ?', (p.limit,)).fetchall()
+            group_sql=' AND dataset_group_id=?' if p.dataset_group_id else " AND dataset_group_id!='demo'"
+            candidates=db.execute('SELECT id FROM conversations WHERE archived_at IS NULL'+group_sql+' ORDER BY id LIMIT ?', ((p.dataset_group_id,p.limit) if p.dataset_group_id else (p.limit,))).fetchall()
         else:
-            candidates=db.execute('''SELECT c.id FROM conversations c WHERE NOT EXISTS
-                (SELECT 1 FROM evaluations e WHERE e.conversation_id=c.id AND e.checklist_id=?)
-                ORDER BY c.id LIMIT ?''',(rubric['id'],p.limit)).fetchall()
+            group_sql=' AND c.dataset_group_id=?' if p.dataset_group_id else " AND c.dataset_group_id!='demo'"
+            args=(rubric['id'],p.dataset_group_id,p.limit) if p.dataset_group_id else (rubric['id'],p.limit)
+            candidates=db.execute('''SELECT c.id FROM conversations c WHERE c.archived_at IS NULL AND NOT EXISTS
+                (SELECT 1 FROM evaluations e WHERE e.conversation_id=c.id AND e.checklist_id=?)'''+group_sql+
+                ' ORDER BY c.id LIMIT ?',args).fetchall()
         ids=[r['id'] for r in candidates]
         if not ids:
             return {'job_id':None,'total':0,'status':'nothing-to-do'}
