@@ -35,7 +35,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parent
 DB = Path(os.environ.get('CQA_DB_PATH',str(ROOT/'cqa.sqlite3')))
 if not DB.is_absolute(): DB = ROOT / DB
-app = FastAPI(title='Freedom Broker CQA — Conversation Quality Analytics',version='1.2.0')
+app = FastAPI(title='Freedom Broker CQA — Conversation Quality Analytics',version='1.2.1')
 app.mount('/static', StaticFiles(directory=ROOT/'static'), name='static')
 
 
@@ -836,6 +836,8 @@ def job_detail(job_id: str):
 
 @app.post('/api/jobs/batch')
 def create_batch(p: BatchPayload):
+    if p.dataset_group_id and p.dataset_group_id.lower() == 'swap':
+        raise HTTPException(422,'SWAP is a reserved dataset, do not evaluate it for PROD')
     if not (os.getenv('CQA_LLM_API_KEY') and os.getenv('CQA_LLM_MODEL')):
         raise HTTPException(503,'AI provider is not configured; batch would not produce real AI results')
     with db_conn() as db:

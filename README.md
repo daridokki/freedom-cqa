@@ -84,3 +84,13 @@ run_tests_windows.bat
 ```
 
 См. также [`LAST_HOUR_RUNBOOK_RU.md`](LAST_HOUR_RUNBOOK_RU.md).
+
+## Последний час / новые контрольные наборы
+
+Смотрите [`CONTROL_DATASET_URGENT_RU.md`](CONTROL_DATASET_URGENT_RU.md): оценивать и сдавать в PROD нужно только **FBroker (10)**. **Swap (3)** сохраняется отдельно и не оценивается. Для пакетного AI-анализа интерфейс требует явный выбор набора и запрещает `Swap`; сервер также блокирует пакетную оценку `Swap`.
+
+Дополнительная автономная проверка итогового PROD (не вызывает LLM):
+
+```powershell
+py scripts/last_hour_preflight.py --dataset FBroker_10_Import.json --results results/prod/results.json
+```

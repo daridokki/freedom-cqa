@@ -11,3 +11,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 # results/dev/results.json and results/prod/results.json MUST be committed.
+
+# Control transcripts stored locally; submit scored results only.
+data/FBroker_10.json
+data/SWAP_3_KEEP_ONLY.json
+FBroker_10_Import.json
+SWAP_3_Keep_Only.json
