@@ -1,6 +1,11 @@
 # Freedom Broker CQA — Submission Edition 1.2
 
+УВАЖАЕМЫЕ ЖЮРИ! ПРОШУ ОБРАТИТЬ ВНИМАНИЕ НА .ZIP FILE FreedomCQA_FINAL. ТАМ НАХОДИТСЯ ВСЯ РАБОТА. Я ОЧЕНЬ СТАРАЛСЯ, ПРАВДА. ДЛЯ УДОСТВА Я УЖЕ ЗАКИНУЛ results.json НА МЕЙН ВЕТКУ.
+
+
 Hackathon scoring system for RU/KZ/EN with an editable eight-criterion rubric, operator-only LLM grading, immutable original scores, appeals, evidence links, archive/delete, and organizer-format **JSON 1.0** export.
+
+
 
 ## Windows quick start / обновление
 
