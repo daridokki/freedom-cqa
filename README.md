@@ -1,6 +1,7 @@
-# Freedom Broker CQA — Submission Edition 1.2
+# Freedom Broker CQA — Submission Edition 1.2 КОМАНДА MIRACULOUS 
+РАБОТУ ДЕЛАЛИ MARAT GUBASHEV, DARIYA ALTYNKHAN
 
-УВАЖАЕМЫЕ ЖЮРИ! ПРОШУ ОБРАТИТЬ ВНИМАНИЕ НА .ZIP FILE FreedomCQA_FINAL. ТАМ НАХОДИТСЯ ВСЯ РАБОТА. Я ОЧЕНЬ СТАРАЛСЯ, ПРАВДА. ДЛЯ УДОСТВА Я УЖЕ ЗАКИНУЛ results.json НА МЕЙН ВЕТКУ. СКАЧАВ ЭТОТ ЗИП, РАСПАКУЙТЕ ЕГО, ВКЛЮЧИТЕ run_windows.bat И ДАЛЬШЕ ЗАПУСТИТСЯ САЙТ ПО КОТОРОМУ ВСЕ ДАЛЬШЕ ИНТУИТИВНО:)
+УВАЖАЕМЫЕ ЖЮРИ! ПРОСИМ ОБРАТИТЬ ВНИМАНИЕ НА .ZIP FILE FreedomCQA_FINAL. ТАМ НАХОДИТСЯ ВСЯ РАБОТА. МЫ ОЧЕНЬ СТАРАЛИСЬ, ПРАВДА. ДЛЯ УДОСТВА МЫ УЖЕ ЗАКИНУЛИ results.json НА МЕЙН ВЕТКУ. СКАЧАВ ЭТОТ ЗИП, РАСПАКУЙТЕ ЕГО, ВКЛЮЧИТЕ run_windows.bat И ДАЛЬШЕ ЗАПУСТИТСЯ САЙТ ПО КОТОРОМУ ВСЕ ДАЛЬШЕ ИНТУИТИВНО:)
 
 
 Hackathon scoring system for RU/KZ/EN with an editable eight-criterion rubric, operator-only LLM grading, immutable original scores, appeals, evidence links, archive/delete, and organizer-format **JSON 1.0** export.
